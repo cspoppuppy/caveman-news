@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import subprocess
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -25,19 +24,6 @@ def load_seen() -> set[str]:
 
 def save_seen(seen: set[str]) -> None:
     SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2))
-
-
-def git_push(filepaths: list[Path]) -> None:
-    try:
-        for fp in filepaths:
-            subprocess.run(["git", "add", str(fp)], cwd=REPO_ROOT, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", f"🪨 caveman news {filepaths[0].stem}"],
-            cwd=REPO_ROOT, check=True, capture_output=True,
-        )
-        subprocess.run(["git", "push"], cwd=REPO_ROOT, check=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        logger.warning("Git failed: %s", e.stderr.decode() if e.stderr else e)
 
 
 async def main() -> None:
@@ -96,7 +82,7 @@ async def main() -> None:
     if written:
         seen.update(newly_seen)
         save_seen(seen)
-        git_push(written)
+        logger.info("Done. %d file(s) written.", len(written))
 
 
 if __name__ == "__main__":
