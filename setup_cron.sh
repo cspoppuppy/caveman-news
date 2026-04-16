@@ -17,7 +17,7 @@ mkdir -p "$LOG_DIR"
 
 # Build the cron line (9:30am daily, hyphens not colons in log filename)
 # NOTE: No GITHUB_TOKEN — fetch.py uses Copilot SDK with logged-in credentials
-CRON_LINE="30 9 * * * cd \"$REPO_DIR\" && \"$UV_PATH\" run python fetch.py >> \"$LOG_DIR/cron.log\" 2>&1"
+CRON_LINE="30 9 * * * cd \"$REPO_DIR\" && \"$UV_PATH\" run python -m aggregator >> \"$LOG_DIR/cron.log\" 2>&1"
 
 # Idempotency check — skip if already installed
 if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then

@@ -1,19 +1,14 @@
-"""Reddit source for caveman-news-local.
-
-Fetches today's top new posts from AI-focused subreddits via the public JSON API.
-No auth or API key required.
-"""
+"""Reddit source — fetches today's new posts from AI subreddits via public JSON API."""
 import logging
 from datetime import date, datetime, timezone
 
 import httpx
 
-from rss_sources import Article
+from .models import Article
 
 logger = logging.getLogger(__name__)
 
 # Each entry: (subreddit, category)
-# Add new subreddits here — category controls markdown grouping
 SUBREDDITS: list[tuple[str, str]] = [
     ("artificial", "AI"),
     ("MachineLearning", "AI"),
@@ -49,7 +44,6 @@ def fetch_reddit_articles(today: date | None = None) -> list[Article]:
 
             p = post.get("data", {})
 
-            # Filter: today only (UTC)
             created_utc = p.get("created_utc")
             if created_utc is None:
                 continue
@@ -59,12 +53,9 @@ def fetch_reddit_articles(today: date | None = None) -> list[Article]:
 
             title = p.get("title", "").strip()
             permalink = p.get("permalink", "")
-            post_url = p.get("url") or f"https://reddit.com{permalink}"
-
             if not title or not permalink:
                 continue
 
-            # Prefer selftext body; fallback to title for link posts
             content = (p.get("selftext") or "").strip()[:_MAX_CONTENT_CHARS]
 
             articles.append(Article(
@@ -80,13 +71,3 @@ def fetch_reddit_articles(today: date | None = None) -> list[Article]:
         logger.info("r/%s: fetched %d articles for %s", subreddit, count, today)
 
     return articles
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    results = fetch_reddit_articles()
-    from collections import Counter
-    counts = Counter(a.source for a in results)
-    for sub, _ in SUBREDDITS:
-        print(f"r/{sub}: {counts.get(f'r/{sub}', 0)} posts")
-    print(f"\nTotal: {len(results)} posts")

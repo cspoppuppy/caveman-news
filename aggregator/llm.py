@@ -52,23 +52,3 @@ async def summarise(title: str, content: str) -> str | None:
     except Exception as e:
         logger.warning("LLM error for article '%s': %s", title, e)
         return None
-
-
-async def summarise_many(articles: list[tuple[str, str]]) -> list[str]:
-    """Summarise multiple (title, content) pairs sequentially."""
-    results = []
-    for title, content in articles:
-        summary = await summarise(title, content)
-        results.append(summary)
-    return results
-
-
-if __name__ == "__main__":
-    async def _test():
-        print(f"Prompt ({len(CAVEMAN_SKILL)} chars): {CAVEMAN_SKILL}")
-        result = await summarise(
-            "OpenAI launches GPT-5",
-            "OpenAI today announced the release of GPT-5, its most capable model yet..."
-        )
-        print(result)
-    asyncio.run(_test())

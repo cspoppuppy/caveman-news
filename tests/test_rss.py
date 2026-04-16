@@ -1,10 +1,11 @@
-"""Tests for rss_sources.py — TDD Red-Green cycle."""
+"""Tests for aggregator.sources.rss"""
 import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from rss_sources import Article, RSS_FEEDS, _strip_html, fetch_rss_articles
+from aggregator.sources.rss import RSS_FEEDS, _strip_html, fetch_rss_articles
+from aggregator.sources.models import Article
 
 
 # ---------------------------------------------------------------------------
@@ -32,14 +33,14 @@ class TestRSSFeeds:
     def test_has_six_feeds(self):
         assert len(RSS_FEEDS) == 6
 
-    def test_all_feeds_are_tuples_of_two_strings(self):
+    def test_all_feeds_are_3_tuples_of_strings(self):
         for item in RSS_FEEDS:
             assert isinstance(item, tuple)
-            assert len(item) == 2
+            assert len(item) == 3
             assert all(isinstance(v, str) for v in item)
 
     def test_expected_sources_present(self):
-        names = [name for name, _ in RSS_FEEDS]
+        names = [name for name, _, _ in RSS_FEEDS]
         assert "OpenAI" in names
         assert "GitHub Copilot" in names
         assert "Google AI" in names
@@ -88,7 +89,7 @@ def _make_feed(entries):
 
 class TestFetchRSSArticles:
     def test_returns_list(self):
-        with patch("rss_sources.feedparser.parse", return_value=_make_feed([])):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=_make_feed([])):
             result = fetch_rss_articles()
         assert isinstance(result, list)
 
@@ -96,7 +97,7 @@ class TestFetchRSSArticles:
         entry = _make_entry(title="AI News", link="https://example.com/ai", summary="<b>Bold</b> text")
         feed = _make_feed([entry])
 
-        with patch("rss_sources.feedparser.parse", return_value=feed):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=feed):
             articles = fetch_rss_articles()
 
         assert len(articles) == len(RSS_FEEDS)  # one per source
@@ -110,18 +111,18 @@ class TestFetchRSSArticles:
         entry = _make_entry()
         feed = _make_feed([entry])
 
-        with patch("rss_sources.feedparser.parse", return_value=feed):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=feed):
             articles = fetch_rss_articles()
 
         source_names = {a.source for a in articles}
-        expected = {name for name, _ in RSS_FEEDS}
+        expected = {name for name, _, _ in RSS_FEEDS}
         assert source_names == expected
 
-    def test_max_five_entries_per_feed(self):
-        entries = [_make_entry(link=f"https://example.com/{i}") for i in range(10)]
+    def test_max_ten_entries_per_feed(self):
+        entries = [_make_entry(link=f"https://example.com/{i}") for i in range(15)]
         feed = _make_feed(entries)
 
-        with patch("rss_sources.feedparser.parse", return_value=feed):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=feed):
             articles = fetch_rss_articles()
 
         per_source = {}
@@ -130,14 +131,14 @@ class TestFetchRSSArticles:
             per_source[a.source] += 1
 
         for count in per_source.values():
-            assert count <= 5
+            assert count <= 10
 
     def test_skips_entry_with_empty_title(self):
         bad = _make_entry(title="", link="https://example.com/no-title")
         good = _make_entry(title="Good", link="https://example.com/good")
         feed = _make_feed([bad, good])
 
-        with patch("rss_sources.feedparser.parse", return_value=feed):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=feed):
             articles = fetch_rss_articles()
 
         titles = [a.title for a in articles]
@@ -149,7 +150,7 @@ class TestFetchRSSArticles:
         good = _make_entry(title="Has URL", link="https://example.com/has-url")
         feed = _make_feed([bad, good])
 
-        with patch("rss_sources.feedparser.parse", return_value=feed):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=feed):
             articles = fetch_rss_articles()
 
         urls = [a.url for a in articles]
@@ -160,7 +161,7 @@ class TestFetchRSSArticles:
         entry = _make_entry(summary=long_text)
         feed = _make_feed([entry])
 
-        with patch("rss_sources.feedparser.parse", return_value=feed):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=feed):
             articles = fetch_rss_articles()
 
         for a in articles:
@@ -176,7 +177,7 @@ class TestFetchRSSArticles:
                 raise ConnectionError("network error")
             return _make_feed([_make_entry()])
 
-        with patch("rss_sources.feedparser.parse", side_effect=parse_side_effect):
+        with patch("aggregator.sources.rss.feedparser.parse", side_effect=parse_side_effect):
             articles = fetch_rss_articles()  # must not raise
 
         # remaining feeds still processed
@@ -188,8 +189,8 @@ class TestFetchRSSArticles:
         def parse_side_effect(url):
             raise RuntimeError("boom")
 
-        with patch("rss_sources.feedparser.parse", side_effect=parse_side_effect):
-            with caplog.at_level(logging.WARNING, logger="rss_sources"):
+        with patch("aggregator.sources.rss.feedparser.parse", side_effect=parse_side_effect):
+            with caplog.at_level(logging.WARNING, logger="aggregator.sources.rss"):
                 fetch_rss_articles()
 
         assert any("boom" in r.message or "boom" in str(r.exc_info) for r in caplog.records)
@@ -204,7 +205,7 @@ class TestFetchRSSArticles:
         }.get(key, default)
         feed = _make_feed([entry])
 
-        with patch("rss_sources.feedparser.parse", return_value=feed):
+        with patch("aggregator.sources.rss.feedparser.parse", return_value=feed):
             articles = fetch_rss_articles()
 
         assert any(a.content == "desc text" for a in articles)

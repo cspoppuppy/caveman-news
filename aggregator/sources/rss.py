@@ -1,22 +1,12 @@
 import re
 import logging
-from dataclasses import dataclass, field
 from datetime import date
 
 import feedparser
 
+from .models import Article
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class Article:
-    title: str
-    url: str
-    content: str
-    source: str
-    category: str = "AI"
-    published_date: date | None = field(default=None, compare=False)
-
 
 # Each entry: (source_name, feed_url, category)
 RSS_FEEDS: list[tuple[str, str, str]] = [
@@ -28,7 +18,7 @@ RSS_FEEDS: list[tuple[str, str, str]] = [
     ("VentureBeat AI", "https://venturebeat.com/category/ai/feed/", "AI"),
 ]
 
-_MAX_ENTRIES_PER_FEED = 10  # scan more; date filter will trim
+_MAX_ENTRIES_PER_FEED = 10
 _MAX_CONTENT_CHARS = 3000
 
 
@@ -57,14 +47,12 @@ def fetch_rss_articles(today: date | None = None) -> list[Article]:
             if not title or not url:
                 continue
 
-            # Date filter: only today's articles
             pub = entry.get("published_parsed")
             if pub:
-                pub_date = date(*pub[:3])  # (year, month, day) from struct_time
+                pub_date = date(*pub[:3])
                 if pub_date != today:
                     continue
             else:
-                # No date metadata — include (better than silently missing)
                 pub_date = None
 
             raw_content = entry.get("summary", "") or entry.get("description", "")
@@ -80,15 +68,3 @@ def fetch_rss_articles(today: date | None = None) -> list[Article]:
             ))
 
     return articles
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    results = fetch_rss_articles()
-
-    from collections import Counter
-
-    counts = Counter(a.source for a in results)
-    for source_name, _ in RSS_FEEDS:
-        print(f"{source_name}: {counts.get(source_name, 0)} articles")
-    print(f"\nTotal: {len(results)} articles")

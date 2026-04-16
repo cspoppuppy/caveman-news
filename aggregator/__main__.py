@@ -2,13 +2,11 @@ import asyncio
 import json
 import logging
 import subprocess
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-from rss_sources import fetch_rss_articles
-from scrape_sources import fetch_scraped_articles
-from reddit_sources import fetch_reddit_articles
-from llm import summarise
+from aggregator.llm import summarise
+from aggregator.sources import fetch_reddit_articles, fetch_rss_articles, fetch_scraped_articles
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,7 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).parent
+REPO_ROOT = Path(__file__).parent.parent
 SEEN_URLS_FILE = REPO_ROOT / ".seen_urls.json"
 CONTENT_DIR = REPO_ROOT / "site" / "content"
 
@@ -50,7 +48,6 @@ async def main() -> None:
     logger.info("=== Caveman News starting ===")
     today = date.today()
 
-    # 1. Fetch all articles
     logger.info("Fetching RSS articles (today: %s)...", today)
     rss_articles = fetch_rss_articles(today=today)
     logger.info("Fetched %d RSS articles", len(rss_articles))
@@ -65,7 +62,6 @@ async def main() -> None:
 
     all_articles = rss_articles + scraped_articles + reddit_articles
 
-    # 2. Deduplicate
     seen_urls = load_seen_urls()
     new_articles = [a for a in all_articles if a.url and a.url not in seen_urls]
     logger.info("%d new articles after dedup (skipped %d)", len(new_articles), len(all_articles) - len(new_articles))
@@ -74,12 +70,11 @@ async def main() -> None:
         logger.info("No new articles. Nothing to write.")
         return
 
-    # 3. Group by category → source
+    # Group by category → source
     by_category: dict[str, dict[str, list]] = {}
     for article in new_articles:
         by_category.setdefault(article.category, {}).setdefault(article.source, []).append(article)
 
-    # 4. Build Hugo content files — one per category
     all_newly_seen: set[str] = set()
     written_files: list[Path] = []
 
@@ -88,7 +83,6 @@ async def main() -> None:
         cat_dir = CONTENT_DIR / cat_slug
         cat_dir.mkdir(parents=True, exist_ok=True)
 
-        # Ensure category _index.md exists
         index_file = cat_dir / "_index.md"
         if not index_file.exists():
             index_file.write_text(
@@ -98,7 +92,7 @@ async def main() -> None:
 
         output_path = cat_dir / f"{today.isoformat()}.md"
         sources_used = sorted(sources.keys())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         lines = [
             "---",
@@ -141,7 +135,6 @@ async def main() -> None:
         all_newly_seen.update(newly_seen_cat)
         written_files.append(output_path)
 
-    # 5. Save seen URLs + git push
     if not written_files:
         logger.info("Nothing written. UGG BORED.")
         return
