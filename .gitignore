@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.coverage
+htmlcov/
 .seen_urls.json
 logs/
 *.egg-info/
