@@ -89,7 +89,7 @@ async def main() -> None:
     lines = [
         f"# 🪨 Caveman News — {today.isoformat()}",
         "",
-        f"> UGG BRING NEWS. {total} NEW THING HAPPEN TODAY. READ OR NO READ. UGG NOT CARE.",
+        f"> UGG BRING NEWS TODAY. READ OR NO READ. UGG NOT CARE.",
         "",
     ]
 
@@ -105,6 +105,9 @@ async def main() -> None:
             for article in articles:
                 logger.info("Summarising: [%s / %s] %s", category, source, article.title[:55])
                 summary = await summarise(article.title, article.content)
+                if summary is None:
+                    logger.info("Skipping (no summary): %s", article.title[:60])
+                    continue
                 lines.append(f"#### {article.title}")
                 lines.append(f"🔗 {article.url}")
                 lines.append("")

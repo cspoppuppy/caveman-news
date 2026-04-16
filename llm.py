@@ -12,11 +12,10 @@ CAVEMAN_SKILL = (
     "British English. Drop articles/filler/hedging/pleasantries. "
     "Fragments OK. Short synonyms. Technical terms exact. Punchy grunts."
 )
-FALLBACK_SUMMARY = "[UGH. UGG NO GET SUMMARY. BRAIN HURT.]"
 
 
-async def summarise(title: str, content: str) -> str:
-    """Summarise a news article using the installed caveman skill."""
+async def summarise(title: str, content: str) -> str | None:
+    """Summarise a news article. Returns None on failure — caller should skip."""
     prompt = (
         f"{CAVEMAN_SKILL}\n\n"
         f"---\n\n"
@@ -44,14 +43,15 @@ async def summarise(title: str, content: str) -> str:
                 await session.send(prompt)
                 await asyncio.wait_for(done.wait(), timeout=30)
 
-        return "".join(result_parts).strip() or FALLBACK_SUMMARY
+        summary = "".join(result_parts).strip()
+        return summary if summary else None
 
     except asyncio.TimeoutError:
         logger.warning("LLM timeout for article: %s", title)
-        return FALLBACK_SUMMARY
+        return None
     except Exception as e:
         logger.warning("LLM error for article '%s': %s", title, e)
-        return FALLBACK_SUMMARY
+        return None
 
 
 async def summarise_many(articles: list[tuple[str, str]]) -> list[str]:
