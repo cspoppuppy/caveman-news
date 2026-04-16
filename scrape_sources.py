@@ -99,7 +99,7 @@ def _fetch_anthropic() -> list[Article]:
         except Exception as exc:
             logger.warning("Failed to fetch Anthropic article %s: %s", article_url, exc)
 
-        articles.append(Article(title=title, url=article_url, content=content, source="Anthropic"))
+        articles.append(Article(title=title, url=article_url, content=content, source="Anthropic", category="AI"))
 
     return articles
 
@@ -163,7 +163,7 @@ def _fetch_mistral() -> list[Article]:
         except Exception as exc:
             logger.warning("Failed to fetch Mistral article %s: %s", article_url, exc)
 
-        articles.append(Article(title=title, url=article_url, content=content, source="Mistral"))
+        articles.append(Article(title=title, url=article_url, content=content, source="Mistral", category="AI"))
 
     return articles
 

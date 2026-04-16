@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 import subprocess
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from rss_sources import fetch_rss_articles
 from scrape_sources import fetch_scraped_articles
+from reddit_sources import fetch_reddit_articles
 from llm import summarise
 
 logging.basicConfig(
@@ -46,17 +47,22 @@ def git_commit_and_push(filepath: Path) -> None:
 
 async def main() -> None:
     logger.info("=== Caveman News starting ===")
+    today = date.today()
 
     # 1. Fetch all articles
-    logger.info("Fetching RSS articles...")
-    rss_articles = fetch_rss_articles()
+    logger.info("Fetching RSS articles (today: %s)...", today)
+    rss_articles = fetch_rss_articles(today=today)
     logger.info("Fetched %d RSS articles", len(rss_articles))
 
     logger.info("Fetching scraped articles...")
     scraped_articles = fetch_scraped_articles()
     logger.info("Fetched %d scraped articles", len(scraped_articles))
 
-    all_articles = rss_articles + scraped_articles
+    logger.info("Fetching Reddit articles (today: %s)...", today)
+    reddit_articles = fetch_reddit_articles(today=today)
+    logger.info("Fetched %d Reddit articles", len(reddit_articles))
+
+    all_articles = rss_articles + scraped_articles + reddit_articles
 
     # 2. Deduplicate
     seen_urls = load_seen_urls()
@@ -67,42 +73,45 @@ async def main() -> None:
         logger.info("No new articles. Nothing to write.")
         return
 
-    # 3. Summarise each article
-    # Group by source for the markdown output
-    by_source: dict[str, list[tuple]] = {}
+    # 3. Group by category → source (nested dict for structured markdown)
+    by_category: dict[str, dict[str, list]] = {}
     for article in new_articles:
-        if article.source not in by_source:
-            by_source[article.source] = []
-        by_source[article.source].append(article)
+        cat = article.category
+        src = article.source
+        by_category.setdefault(cat, {}).setdefault(src, []).append(article)
 
-    # 4. Build markdown content
+    # 4. Build markdown
+    total = sum(len(arts) for sources in by_category.values() for arts in sources.values())
     now = datetime.now()
     filename = now.strftime("%Y-%m-%d-%H-%M-%S") + ".md"
     output_path = NEWS_DIR / filename
 
     lines = [
-        f"# 🪨 Caveman News — {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"# 🪨 Caveman News — {today.isoformat()}",
         "",
-        f"> UGG BRING NEWS. {len(new_articles)} NEW THING HAPPEN. READ OR NO READ. UGG NOT CARE.",
+        f"> UGG BRING NEWS. {total} NEW THING HAPPEN TODAY. READ OR NO READ. UGG NOT CARE.",
         "",
     ]
 
-    total_summarised = 0
     newly_seen: set[str] = set()
+    total_summarised = 0
 
-    for source, articles in by_source.items():
-        lines.append(f"## {source}")
+    for category, sources in sorted(by_category.items()):
+        lines.append(f"## {category}")
         lines.append("")
-        for article in articles:
-            logger.info("Summarising: [%s] %s", source, article.title[:60])
-            summary = await summarise(article.title, article.content)
-            lines.append(f"### {article.title}")
-            lines.append(f"🔗 {article.url}")
+        for source, articles in sorted(sources.items()):
+            lines.append(f"### {source}")
             lines.append("")
-            lines.append(summary)
-            lines.append("")
-            newly_seen.add(article.url)
-            total_summarised += 1
+            for article in articles:
+                logger.info("Summarising: [%s / %s] %s", category, source, article.title[:55])
+                summary = await summarise(article.title, article.content)
+                lines.append(f"#### {article.title}")
+                lines.append(f"🔗 {article.url}")
+                lines.append("")
+                lines.append(summary)
+                lines.append("")
+                newly_seen.add(article.url)
+                total_summarised += 1
 
     # 5. Write file
     NEWS_DIR.mkdir(exist_ok=True)
