@@ -9,7 +9,6 @@
     {{ range .Site.Sections }}
     <div class="hub-section">
       <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2>
-      <p class="desc">{{ .Description }}</p>
       <ul>
         {{ range first 5 .Pages }}
         <li>
