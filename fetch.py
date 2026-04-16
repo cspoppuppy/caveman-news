@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).parent
 SEEN_URLS_FILE = REPO_ROOT / ".seen_urls.json"
-CONTENT_DIR = REPO_ROOT / "content"
+CONTENT_DIR = REPO_ROOT / "site" / "content"
 
 
 def load_seen_urls() -> set[str]:
