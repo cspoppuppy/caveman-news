@@ -1,0 +1,819 @@
+plan_id: caveman-news-local-001
+objective: |
+  Build a local Python-based AI news aggregator that fetches AI news from 8 major sources
+  (RSS + web scraping), summarises each article in caveman-speak via the GitHub Copilot SDK
+  (gpt-5-mini, no API key required — uses logged-in Copilot credentials), writes a
+  consolidated yyyy-mm-dd-hh-mm-ss.md file per run to news/, auto git-commits and pushes,
+  and runs daily at 9:30am via macOS crontab.
+created_at: "2025-07-16T00:00:00Z"
+created_by: gem-planner
+status: pending
+research_confidence: high
+
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 9
+  risk_score: low
+
+tldr: |
+  7-task, 5-wave DAG. Wave 1 scaffolds the project (T1 alone). Wave 2 builds the RSS fetch
+  module, web scraping (Anthropic + Mistral only), and LLM summariser in parallel (T2+T3+T4).
+  Wave 3 assembles the fetch.py orchestrator (T5). Wave 4 installs the macOS cron job (T6).
+  Wave 5 writes the full README after both orchestrator and cron script are complete (T7).
+  Git + cron handled by gem-devops; docs by gem-documentation-writer; code by gem-implementer.
+
+open_questions: []
+
+pre_mortem:
+  overall_risk_level: low
+  critical_failure_modes:
+    - scenario: Copilot not logged in or no active Copilot subscription when summarise() is called
+      likelihood: medium
+      impact: medium
+      mitigation: |
+        CopilotClient raises an auth error if `gh auth login` has not been run or the user
+        lacks an active Copilot subscription. Wrap every session in try/except; return fallback
+        string "[UGH. UGG NO GET SUMMARY.]" and log WARNING. README prominently documents
+        `gh auth login` as a prerequisite. Never crash the run on auth failure.
+    - scenario: Scraping targets (Anthropic, Mistral) change their HTML structure or return 4xx
+      likelihood: medium
+      impact: low
+      mitigation: |
+        Wrap each scraper in isolated try/except. Log "0 articles found for {source}" so it
+        is visible in cron.log. Run continues with remaining sources. Selectors are isolated
+        per-source function so fixes are surgical.
+    - scenario: git push fails (no network, SSH key missing, expired credentials)
+      likelihood: low
+      impact: low
+      mitigation: |
+        Capture subprocess return code. Log ERROR but do NOT raise — the .md file is already
+        written locally. User sees the failure in logs/cron.log.
+    - scenario: crontab PATH is minimal; uv / python not found at runtime
+      likelihood: medium
+      impact: medium
+      mitigation: |
+        setup_cron.sh resolves the full absolute path to uv via `which uv` and hard-codes it
+        in the crontab line. No env var injection needed — CopilotClient uses gh credentials
+        automatically. README documents the PATH requirement explicitly.
+  assumptions:
+    - User has run `gh auth login` and has an active GitHub Copilot subscription
+    - github-copilot-sdk is installed via `uv sync` (declared in pyproject.toml)
+    - uv is installed at a stable absolute path on the host machine
+    - Python 3.11+ is available via uv's managed virtual environment
+    - caveman-news-local repo is already git-initialised with a remote origin configured
+    - Internet access is available at 9:30am when cron fires
+    - All 8 news sources are publicly accessible without authentication
+    - xAI (403) and Meta AI (JS SPA) are explicitly excluded from scrape_sources.py
+
+implementation_specification:
+  code_structure: |
+    Flat single-directory layout. One entrypoint (fetch.py), three pure helper modules
+    (rss_sources.py, scrape_sources.py, llm.py), and one shell script (setup_cron.sh).
+    No sub-packages are needed at this scale. pyproject.toml + uv manages the virtual
+    environment. .seen_urls.json provides cross-run deduplication state (gitignored).
+  affected_areas:
+    - caveman-news-local/ (repo root — all new files live here)
+    - caveman-news-local/news/ (runtime output; git-tracked via .gitkeep)
+    - caveman-news-local/logs/ (runtime log directory; gitignored)
+  component_details:
+    - component: pyproject.toml
+      responsibility: Declare Python 3.11+ project metadata and all runtime dependencies.
+      interfaces:
+        - "uv sync installs: feedparser, httpx, beautifulsoup4, lxml, github-copilot-sdk"
+    - component: rss_sources.py
+      responsibility: |
+        Fetch articles from 6 RSS feeds using feedparser. Returns a flat list of article
+        dicts. Handles network errors per-feed with logged warnings.
+      interfaces:
+        - "fetch_rss_articles() -> list[dict]"
+        - "Dict schema: {source: str, title: str, url: str, published: str, content_snippet: str}"
+    - component: scrape_sources.py
+      responsibility: |
+        Scrape 2 sites without public RSS (Anthropic, Mistral) using httpx + BeautifulSoup4.
+        Returns same dict schema as rss_sources for uniform downstream use. xAI and Meta AI
+        are excluded: xAI returns HTTP 403 (CDN/WAF), Meta AI is a pure JS SPA. If any
+        remaining source returns empty content or 4xx, logs warning and continues — never crashes.
+      interfaces:
+        - "fetch_scraped_articles() -> list[dict]"
+        - "Dict schema: same 5-key schema as rss_sources output"
+    - component: llm.py
+      responsibility: |
+        Wrap the GitHub Copilot SDK (CopilotClient) with an async summarise() function.
+        Creates a new Copilot session per call (or per run), sends the Ugg caveman prompt,
+        streams AssistantMessageData events until SessionIdleData signals completion.
+        No API key or env vars required — uses logged-in gh / Copilot CLI credentials.
+        Returns fallback string on any exception.
+      interfaces:
+        - "async def summarise(text: str) -> str"
+    - component: fetch.py
+      responsibility: |
+        Async orchestrator. Calls rss_sources + scrape_sources, deduplicates by URL
+        against .seen_urls.json, calls await llm.summarise() per new article, writes the
+        output .md file, updates .seen_urls.json, runs git add/commit/push. Entry via
+        asyncio.run(main()). No load_dotenv or GITHUB_TOKEN references.
+      interfaces:
+        - "async def main() — invoked via asyncio.run(main())"
+    - component: setup_cron.sh
+      responsibility: |
+        Idempotent shell script that installs a single crontab entry running fetch.py at
+        9:30am daily. Resolves full absolute path to uv. No GITHUB_TOKEN or .env handling
+        needed — CopilotClient uses gh credentials automatically. Uses `|| true` in crontab
+        install line to handle fresh machines. Redirects stdout+stderr to logs/cron.log.
+      interfaces:
+        - "Standalone shell script: bash setup_cron.sh"
+    - component: README.md
+      responsibility: |
+        Full user-facing documentation covering prerequisites, setup, manual run, cron
+        setup, output format, sources table, deduplication, logs, and troubleshooting.
+      interfaces:
+        - "Markdown document for human readers"
+  dependencies:
+    - component: fetch.py
+      relationship: imports rss_sources, scrape_sources, llm; async event loop via asyncio
+    - component: rss_sources.py
+      relationship: depends on feedparser, beautifulsoup4 (for HTML stripping)
+    - component: scrape_sources.py
+      relationship: depends on httpx, beautifulsoup4, lxml
+    - component: llm.py
+      relationship: depends on github-copilot-sdk (CopilotClient); no API key dependency
+  integration_points:
+    - fetch.py integrates all three helper modules via standard Python imports
+    - GitHub Copilot API via CopilotClient (github-copilot-sdk) using gh auth credentials
+    - macOS crontab integrated via setup_cron.sh shell invocation of crontab command
+    - git remote origin integrated via subprocess calls in fetch.py
+
+contracts:
+  - from_task: T1
+    to_task: T2
+    interface: "pyproject.toml declares feedparser, httpx, beautifulsoup4 deps; .venv created by uv sync"
+    format: "uv-managed virtual environment with deps installed; T2 can import feedparser"
+  - from_task: T1
+    to_task: T3
+    interface: "pyproject.toml declares httpx, beautifulsoup4, lxml deps; .venv ready"
+    format: "uv-managed virtual environment with deps installed; T3 can import httpx and bs4"
+  - from_task: T1
+    to_task: T4
+    interface: "pyproject.toml declares github-copilot-sdk; .venv created by uv sync"
+    format: "uv-managed virtual environment with deps installed; T4 can import copilot.CopilotClient"
+  - from_task: T2
+    to_task: T5
+    interface: "fetch_rss_articles() returns list[dict] with keys: source, title, url, published, content_snippet"
+    format: "Python list of dicts; all values are str; content_snippet ≤1000 chars, HTML-stripped"
+  - from_task: T3
+    to_task: T5
+    interface: "fetch_scraped_articles() returns list[dict] with identical 5-key schema"
+    format: "Python list of dicts; source is human-readable name; url is absolute; published may be empty str"
+  - from_task: T4
+    to_task: T5
+    interface: "async def summarise(text: str) -> str — returns caveman-speak summary string"
+    format: "Plain str, ≤120 words, no markdown inside; fallback string on any error"
+  - from_task: T5
+    to_task: T6
+    interface: "fetch.py exists at repo root; logs/ dir exists; entry: `uv run python fetch.py`"
+    format: "File path: /Users/sha.cheng/Projects/caveman-news-local/fetch.py"
+  - from_task: T5
+    to_task: T7
+    interface: "All modules and scripts exist; output format and env vars are finalised"
+    format: "T7 reads completed source files to write accurate documentation"
+  - from_task: T6
+    to_task: T7
+    interface: "setup_cron.sh exists at repo root with correct idempotent cron syntax"
+    format: "Shell script file; T7 reads it to document the cron installer accurately"
+
+tasks:
+  - id: T1
+    title: Project scaffold — pyproject.toml, .gitignore, news/.gitkeep
+    description: |
+      Create the complete project skeleton so all subsequent tasks have a valid Python project.
+
+      Deliverables:
+      1. pyproject.toml:
+         - name = "caveman-news-local"
+         - requires-python = ">=3.11"
+         - dependencies = [
+             "feedparser>=6",
+             "httpx>=0.27",
+             "beautifulsoup4>=4.12",
+             "lxml>=5",
+             "github-copilot-sdk"
+           ]
+      2. .gitignore — include: __pycache__/, .venv/, *.pyc, .seen_urls.json, logs/
+      3. news/.gitkeep — empty file so news/ dir is git-tracked
+      NOTE: Do NOT create .env.example — no API key is needed. Auth is handled by
+      the logged-in GitHub Copilot user via `gh auth login`.
+      NOTE: Do NOT create logs/.gitkeep. logs/ is gitignored; the directory is created
+      at runtime by setup_cron.sh via `mkdir -p`. Tracking a .gitkeep inside a gitignored
+      directory causes git warnings and is never actually tracked.
+
+      After creating pyproject.toml run `uv sync` to verify deps resolve cleanly.
+      Do NOT create fetch.py, rss_sources.py, scrape_sources.py, or llm.py here.
+    wave: 1
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: /Users/sha.cheng/Projects/caveman-news-local
+        description: Repo root — create all scaffold files here
+    planning_history:
+      - pass: 1
+        reason: Initial plan
+        timestamp: "2025-07-16T00:00:00Z"
+        estimated_effort: small
+        estimated_files: 5
+        estimated_lines: 40
+        focus_area: project skeleton
+        verification:
+          - pyproject.toml parses cleanly with `uv sync --dry-run` or `uv sync`
+          - All scaffold files exist at expected paths (.gitignore, news/.gitkeep)
+          - .gitignore contains .seen_urls.json, logs/, __pycache__/ entries
+          - news/ directory exists with news/.gitkeep; logs/ is listed in .gitignore only
+            (logs/ directory itself is created at runtime by setup_cron.sh)
+        acceptance_criteria:
+          - uv sync resolves github-copilot-sdk and all other deps without error
+          - No .env.example file is created (no API key needed)
+          - .gitignore excludes .seen_urls.json and logs/
+          - news/ directory exists with news/.gitkeep; logs/ is listed in .gitignore only
+            (logs/ directory itself is created at runtime by setup_cron.sh)
+        failure_modes:
+          - scenario: uv not installed or not on PATH when running uv sync
+            likelihood: low
+            impact: low
+            mitigation: |
+              Files can still be created without running uv sync.
+              README will document uv install step. Flag warning in output.
+        tech_stack:
+          - uv (package manager)
+          - pyproject.toml (PEP 517/518 standard)
+          - github-copilot-sdk (PyPI)
+        test_coverage: null
+
+  - id: T2
+    title: RSS fetch module — rss_sources.py for 6 RSS-feed sources
+    description: |
+      Create rss_sources.py implementing fetch_rss_articles() that pulls from 6 RSS feeds.
+
+      RSS feeds to handle (source name → URL):
+        OpenAI Blog       → https://openai.com/news/rss.xml
+        Google AI Blog    → https://blog.google/technology/ai/rss/
+        GitHub Blog AI    → https://github.blog/feed/?category=ai
+        HuggingFace Blog  → https://huggingface.co/blog/feed.xml
+        The Verge AI      → https://www.theverge.com/ai-artificial-intelligence/rss/index.xml
+        VentureBeat AI    → https://venturebeat.com/category/ai/feed/
+
+      Implementation:
+      - Use feedparser.parse(url) for each feed
+      - Per entry extract: source (human-readable name), title, url (entry.link),
+        published (entry.published or entry.updated or ""), content_snippet (first 1000 chars
+        of entry.summary or entry.content[0].value, stripped of HTML via BeautifulSoup)
+      - Limit to 10 most recent entries per feed (feedparser returns newest first)
+      - Wrap each feed in try/except; on failure log WARNING with source name and continue
+      - Sleep 1 second between feed fetches (politeness)
+      - Return flat list[dict] across all feeds
+
+      Do NOT import or call llm.py or scrape_sources.py.
+    wave: 2
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - T1
+    conflicts_with: []
+    context_files:
+      - path: /Users/sha.cheng/Projects/caveman-news-local/pyproject.toml
+        description: Verify feedparser and beautifulsoup4 are declared as deps
+    planning_history:
+      - pass: 1
+        reason: Initial plan
+        timestamp: "2025-07-16T00:00:00Z"
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 80
+        focus_area: RSS parsing
+        verification:
+          - "`uv run python -c 'from rss_sources import fetch_rss_articles; arts = fetch_rss_articles(); print(len(arts), arts[0].keys())'` returns > 0 articles"
+          - Each dict has exactly the 5 keys: source, title, url, published, content_snippet
+          - A simulated feed failure (bad URL) does not raise an unhandled exception
+        acceptance_criteria:
+          - fetch_rss_articles() returns list[dict] with correct 5-key schema
+          - Network timeout or malformed XML is caught and logged; run continues
+          - No more than 10 entries returned per feed
+          - content_snippet is HTML-stripped plain text
+        failure_modes:
+          - scenario: RSS feed returns malformed XML or an empty feed
+            likelihood: medium
+            impact: low
+            mitigation: |
+              feedparser handles malformed XML gracefully returning an empty entries list.
+              Check len(feed.entries) > 0 before iterating.
+        tech_stack:
+          - feedparser>=6
+          - beautifulsoup4>=4.12 (HTML stripping in snippets)
+        test_coverage: null
+
+  - id: T3
+    title: Scraping module — scrape_sources.py for Anthropic and Mistral
+    description: |
+      Create scrape_sources.py implementing fetch_scraped_articles() that scrapes 2 sites
+      with no public RSS feed.
+
+      Sites to scrape (source name → URL):
+        Anthropic News → https://www.anthropic.com/news
+        Mistral News   → https://mistral.ai/news/
+
+      EXCLUDED SOURCES (with rationale — do NOT re-add):
+        xAI (x.ai/blog)        — returns HTTP 403; CDN/WAF blocks all non-browser requests.
+        Meta AI (ai.meta.com)  — pure client-side React SPA; httpx receives zero article
+                                  content without a headless browser (over-engineered for
+                                  a personal cron script).
+
+      Implementation:
+      - Use httpx.get(url, timeout=15, follow_redirects=True) with User-Agent header:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+      - Parse with BeautifulSoup(response.text, "lxml")
+      - Research the actual HTML structure for each site by fetching and inspecting.
+        Typical patterns to look for:
+        * Anthropic: article cards in a grid; <a> tags with href and inner heading text
+        * Mistral:   article card links with heading text
+      - Per article: build dict with source (human-readable), title (heading text stripped),
+        url (absolute — resolve relative hrefs against the base URL using urljoin),
+        published (""), content_snippet ("")
+      - Limit to 10 most recent articles per source
+      - RESILIENCE: Wrap each site in isolated try/except. If a source returns empty
+        content, HTTP 4xx, or raises any exception: log WARNING and return [] for that
+        source. The script must never crash due to a single source failure.
+      - Return flat list[dict] matching rss_sources schema exactly
+
+      Do NOT follow article links to fetch body content.
+      Do NOT import rss_sources or llm from this module.
+    wave: 2
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - T1
+    conflicts_with: []
+    context_files:
+      - path: /Users/sha.cheng/Projects/caveman-news-local/pyproject.toml
+        description: Verify httpx, beautifulsoup4, lxml are declared
+    planning_history:
+      - pass: 1
+        reason: Initial plan
+        timestamp: "2025-07-16T00:00:00Z"
+        estimated_effort: medium
+        estimated_files: 1
+        estimated_lines: 120
+        focus_area: HTML scraping
+        verification:
+          - "`uv run python -c 'from scrape_sources import fetch_scraped_articles; arts = fetch_scraped_articles(); print(len(arts))'` returns > 0"
+          - All returned dicts have the 5-key schema
+          - All urls are absolute (start with https://)
+          - One site being unreachable does not crash the function
+        acceptance_criteria:
+          - fetch_scraped_articles() returns list[dict] matching rss_sources schema
+          - Returned urls are absolute (urljoin applied to relative hrefs)
+          - Per-site try/except ensures partial failure resilience
+          - Limit of 10 articles per source is enforced
+        failure_modes:
+          - scenario: Site changes HTML structure; selectors return 0 articles
+            likelihood: medium
+            impact: low
+            mitigation: |
+              Log warning "0 articles found for {source}" — visible in cron.log.
+              Run continues. Fix is isolated to one function per source.
+          - scenario: httpx raises ConnectTimeout or SSLError
+            likelihood: low
+            impact: low
+            mitigation: Caught by try/except; source skipped with logged warning.
+        tech_stack:
+          - httpx>=0.27
+          - beautifulsoup4>=4.12
+          - lxml>=5
+        test_coverage: null
+
+  - id: T4
+    title: LLM summariser module — llm.py with GitHub Copilot SDK and Ugg caveman prompt
+    description: |
+      Create llm.py implementing async summarise(text) using the GitHub Copilot SDK.
+
+      Implementation:
+      - Imports:
+          import asyncio
+          from copilot import CopilotClient
+          from copilot.generated.session_events import AssistantMessageData, SessionIdleData
+
+      - MODEL = "gpt-5-mini"
+
+      - PROMPT prefix (prepended to the article text in session.send()):
+          "You are Ugg, a caveman reporter. Summarise this AI news article in caveman-speak: "
+          "ultra-compressed grunts, short phrases, use words like UGH, FIRE GOOD, BIG BRAIN, "
+          "MANY STONE, SMASH, NO GOOD, UNGA BUNGA. Max 120 words. Keep it funny and accurate.\n\n"
+
+      - async def summarise(text: str) -> str:
+          result_parts = []
+          done = asyncio.Event()
+
+          try:
+              async with CopilotClient() as client:
+                  async with await client.create_session(model=MODEL) as session:
+                      def on_event(event):
+                          match event.data:
+                              case AssistantMessageData() as data:
+                                  result_parts.append(data.content)
+                              case SessionIdleData():
+                                  done.set()
+
+                      session.on(on_event)
+                      await session.send(PROMPT_PREFIX + text)
+                      await done.wait()
+
+              return "".join(result_parts) or "[UGH. UGG NO GET SUMMARY.]"
+          except Exception as e:
+              import logging
+              logging.warning(f"LLM summarise failed: {e}")
+              return "[UGH. UGG NO GET SUMMARY.]"
+
+      - No API key, no env vars, no rate-limit sleep, no time.sleep() calls.
+      - Do NOT import rss_sources or scrape_sources from this module.
+    wave: 2
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - T1
+    conflicts_with: []
+    context_files:
+      - path: /Users/sha.cheng/Projects/caveman-news-local/pyproject.toml
+        description: Verify github-copilot-sdk is declared as a dep
+    planning_history:
+      - pass: 1
+        reason: Initial plan
+        timestamp: "2025-07-16T00:00:00Z"
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 60
+        focus_area: LLM API integration
+        verification:
+          - Module imports without error when gh is authenticated
+          - "uv run python -c 'import asyncio; from llm import summarise; print(asyncio.run(summarise(\"test\")))'"
+            returns a non-empty string
+          - Any exception is caught and returns fallback string without propagating
+        acceptance_criteria:
+          - summarise() opens a CopilotClient session with model=gpt-5-mini and the Ugg prompt
+          - Streams AssistantMessageData events and signals done on SessionIdleData
+          - Returns fallback "[UGH. UGG NO GET SUMMARY.]" on any exception
+          - No API key, no GITHUB_TOKEN, no env vars referenced anywhere in the module
+          - Function signature is async def summarise(text: str) -> str
+        failure_modes:
+          - scenario: Copilot not authenticated (gh auth login not run or no subscription)
+            likelihood: medium
+            impact: medium
+            mitigation: |
+              CopilotClient raises auth error — caught by broad except; fallback returned
+              and WARNING logged. User sees it in cron.log. README documents gh auth login
+              as a hard prerequisite.
+          - scenario: gpt-5-mini model unavailable or API response schema changes
+            likelihood: low
+            impact: medium
+            mitigation: |
+              Exception caught by broad except; fallback returned. Log ERROR with model name
+              so user can update MODEL constant. README documents how to change the model.
+        tech_stack:
+          - github-copilot-sdk (PyPI package, import as copilot)
+          - asyncio (stdlib)
+        test_coverage: null
+
+  - id: T5
+    title: Main orchestrator — fetch.py (fetch + deduplicate + summarise + write .md + git push)
+    description: |
+      Create fetch.py as the async entrypoint tying all modules together.
+
+      Implementation (in async main() function):
+
+      1. LOGGING
+         Configure logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+      2. FETCH ALL SOURCES
+         rss_articles = rss_sources.fetch_rss_articles()
+         scraped_articles = scrape_sources.fetch_scraped_articles()
+         all_articles = rss_articles + scraped_articles
+
+      3. DEDUPLICATE BY URL
+         seen_path = Path(".seen_urls.json")
+         Load seen_urls set from seen_path (json.loads); default to {} on missing or corrupt file.
+         new_articles = [a for a in all_articles if a["url"] not in seen_urls]
+         Log: f"Fetched {len(all_articles)} articles. {len(new_articles)} new."
+
+      4. SUMMARISE (async)
+         For each article in new_articles:
+           article["summary"] = await llm.summarise(article["content_snippet"])
+
+      5. WRITE OUTPUT FILE
+         now = datetime.now()
+         filename = f"news/{now.strftime('%Y-%m-%d-%H-%M-%S')}.md"
+         Header:
+           "# 🪨 Caveman News — {now.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+           "_Ugg bring news from stone age. Many words. Big brain. Sit. Read._\n\n"
+         Group new_articles by source name (preserve insertion order using dict).
+         For each source group:
+           "## {source_name}\n\n"
+           For each article in group:
+             "### [{title}]({url})\n\n{summary}\n\n---\n\n"
+         If len(new_articles) == 0:
+           Write: "# 🪨 Caveman News — {date}\n\n_UGH. NO NEW NEWS TODAY. UGG SAD._\n"
+         Write file UTF-8.
+
+      6. UPDATE SEEN URLS
+         Add all new article URLs to seen_urls dict (url → date string).
+         Save back to seen_path as JSON.
+
+      7. GIT ADD / COMMIT / PUSH
+         run_git("add", "news/")
+         run_git("commit", "-m", f"🪨 caveman news {now.strftime('%Y-%m-%d %H:%M:%S')}")
+         run_git("push")
+         Where run_git() uses subprocess.run, captures returncode, logs ERROR if != 0.
+
+      8. DONE LOG
+         print(f"Ugg done. {len(new_articles)} new articles. File: {filename}")
+
+      Entry point:
+         if __name__ == "__main__":
+             asyncio.run(main())
+
+      NO load_dotenv(), NO GITHUB_TOKEN references anywhere.
+      All imports at top of file: stdlib → third-party → local modules.
+    wave: 3
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - T2
+      - T3
+      - T4
+    conflicts_with: []
+    context_files:
+      - path: /Users/sha.cheng/Projects/caveman-news-local/rss_sources.py
+        description: Import fetch_rss_articles from here
+      - path: /Users/sha.cheng/Projects/caveman-news-local/scrape_sources.py
+        description: Import fetch_scraped_articles from here
+      - path: /Users/sha.cheng/Projects/caveman-news-local/llm.py
+        description: Import summarise from here
+    planning_history:
+      - pass: 1
+        reason: Initial plan
+        timestamp: "2025-07-16T00:00:00Z"
+        estimated_effort: medium
+        estimated_files: 1
+        estimated_lines: 140
+        focus_area: orchestration, file writing, git integration
+        verification:
+          - "`uv run python fetch.py` completes without unhandled exception (no GITHUB_TOKEN needed)"
+          - A news/yyyy-mm-dd-hh-mm-ss.md file is created with correct structure (hyphens only)
+          - .seen_urls.json is created and updated after each run
+          - Re-running immediately produces 0 new articles (dedup working)
+          - Git add/commit/push are attempted; failures logged, not raised
+        acceptance_criteria:
+          - fetch.py is fully async: async def main() called via asyncio.run(main())
+          - llm.summarise is called with await and receives article content_snippet (not title+content)
+          - Output .md file has header, ## source sections, ### article entries with title/url/summary
+          - Deduplication prevents re-summarising URLs from previous runs
+          - "Empty run (0 new articles) still writes a file and attempts git commit"
+          - git subprocess failures are logged as ERROR and do not crash the process
+          - No load_dotenv(), no GITHUB_TOKEN, no python-dotenv import anywhere in the file
+          - stdout prints "Ugg done. N new articles. File: path" summary line
+        failure_modes:
+          - scenario: All sources fail; zero articles fetched total
+            likelihood: low
+            impact: low
+            mitigation: |
+              len(all_articles) == 0 is a valid state. Write the empty-run markdown.
+              Log WARNING "No articles fetched from any source."
+          - scenario: .seen_urls.json is corrupted JSON
+            likelihood: low
+            impact: low
+            mitigation: |
+              Wrap json.load in try/except json.JSONDecodeError; reset to {} with WARNING log.
+          - scenario: news/ directory does not exist at write time
+            likelihood: low
+            impact: low
+            mitigation: |
+              Call Path("news").mkdir(exist_ok=True) before writing the output file.
+        tech_stack:
+          - Python standard library (asyncio, subprocess, json, datetime, logging, pathlib)
+          - github-copilot-sdk (via llm.py)
+        test_coverage: null
+
+  - id: T6
+    title: Cron installer — setup_cron.sh for macOS 9:30am daily run
+    description: |
+      Create setup_cron.sh that installs the crontab entry to run fetch.py daily at 9:30am.
+
+      Implementation:
+      1. Resolve uv path:
+           UV_PATH=$(which uv)
+           If empty: echo "ERROR: uv not found on PATH. Install uv first." && exit 1
+      2. Hard-code repo dir:
+           REPO_DIR="/Users/sha.cheng/Projects/caveman-news-local"
+      3. Ensure logs/ dir exists:
+           mkdir -p "$REPO_DIR/logs"
+      4. Build cron line:
+           CRON_LINE="30 9 * * * cd $REPO_DIR && $UV_PATH run python fetch.py >> $REPO_DIR/logs/cron.log 2>&1"
+         NOTE: No GITHUB_TOKEN or .env reference in the cron line. CopilotClient uses
+         the logged-in gh credentials automatically — no env var injection needed.
+      5. Idempotency check:
+           if crontab -l 2>/dev/null | grep -q "caveman-news-local"; then
+             echo "Cron already installed. Nothing changed." && exit 0
+           fi
+      6. Install:
+           (crontab -l 2>/dev/null || true; echo "$CRON_LINE") | crontab -
+      7. Verify and report:
+           echo "Installed crontab entry:"
+           crontab -l | grep "caveman-news-local"
+           echo "✅ Cron installed: daily at 9:30am"
+
+      Make the script self-sufficient with #!/usr/bin/env bash at top and set -e.
+      Do NOT read or reference .env, GITHUB_TOKEN, or any API credentials.
+      Do NOT modify any Python files.
+    wave: 4
+    agent: gem-devops
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies:
+      - T5
+    conflicts_with: []
+    context_files:
+      - path: /Users/sha.cheng/Projects/caveman-news-local/fetch.py
+        description: Entrypoint being scheduled — verify path before writing cron line
+    planning_history:
+      - pass: 1
+        reason: Initial plan
+        timestamp: "2025-07-16T00:00:00Z"
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 35
+        focus_area: macOS crontab setup
+        verification:
+          - bash setup_cron.sh installs the entry or prints "already installed" (idempotent)
+          - crontab -l shows a "30 9 * * *" entry referencing caveman-news-local
+          - logs/ directory exists after running the script
+          - Script exits non-zero when uv is not found
+        acceptance_criteria:
+          - Script is idempotent (safe to run multiple times without duplicating entries)
+          - Full absolute path to uv is used in the cron line (no PATH dependency)
+          - No GITHUB_TOKEN or .env reference anywhere in the script — not needed
+          - crontab install uses `|| true` so it works on fresh machines with no existing crontab
+          - Output redirected to logs/cron.log
+          - Script exits 1 with clear error if uv is not found
+        failure_modes:
+          - scenario: uv is not on PATH when setup_cron.sh is run
+            likelihood: low
+            impact: medium
+            mitigation: Explicit check + exit 1 with instructional error message.
+        environment: development
+        requires_approval: false
+        devops_security_sensitive: false
+
+  - id: T7
+    title: README.md — full project documentation
+    description: |
+      Write a comprehensive README.md for the caveman-news-local project by reading the
+      completed source files and producing accurate, user-facing documentation.
+
+      Sections (all required, no TBD/TODO):
+      1. Header — project name, one-line description, a sample caveman headline quote
+      2. Prerequisites — Python 3.11+, uv, git, GitHub Copilot subscription,
+         `gh auth login` (Copilot SDK uses logged-in credentials — no API key needed).
+         Do NOT mention GITHUB_TOKEN or .env files.
+      3. Setup — clone, `uv sync` (no .env step needed — auth is via gh)
+      4. Running manually — `uv run python fetch.py` with sample stdout output
+      5. Cron setup — `bash setup_cron.sh`, what it does, verify with `crontab -l`
+      6. Output format — describe news/yyyy-mm-dd-hh-mm-ss.md (hyphens, no colons);
+         include a sample snippet showing the ## source heading and ### article +
+         caveman summary structure
+      7. News sources table — columns: Source | URL | Method (RSS/Scrape) | Articles/Run
+         All 8 sources listed (6 RSS + 2 scraped: Anthropic, Mistral).
+         NOTE: xAI and Meta AI are excluded — document why (403/JS SPA) so users
+         understand the scope.
+      8. Deduplication — explain .seen_urls.json; how to reset (delete the file)
+      9. Logs — logs/cron.log location; `tail -f logs/cron.log` command
+      10. Caveman speak samples — 2–3 example summaries showing the output style
+      11. Troubleshooting — Copilot not authenticated (run `gh auth login`), uv not found,
+          git push fails, scraping returns 0 articles, gpt-5-mini model unavailable
+
+      Write in friendly, slightly in-character tone with 🪨 emoji.
+      All code blocks use correct fenced language tags (bash, python, markdown).
+      Do NOT write TBD, TODO, or leave placeholder sections.
+      Do NOT include any "Get a GitHub token / API key" section.
+    wave: 5
+    agent: gem-documentation-writer
+    prototype: false
+    covers: []
+    priority: low
+    status: pending
+    dependencies:
+      - T5
+      - T6
+    conflicts_with: []
+    context_files:
+      - path: /Users/sha.cheng/Projects/caveman-news-local/fetch.py
+        description: Read to document the actual CLI invocation and output format
+      - path: /Users/sha.cheng/Projects/caveman-news-local/pyproject.toml
+        description: Read for accurate dependency list
+      - path: /Users/sha.cheng/Projects/caveman-news-local/setup_cron.sh
+        description: Read to document cron installer accurately
+      - path: /Users/sha.cheng/Projects/caveman-news-local/rss_sources.py
+        description: Read to document RSS sources accurately
+      - path: /Users/sha.cheng/Projects/caveman-news-local/scrape_sources.py
+        description: Read to document scraped sources accurately
+    planning_history:
+      - pass: 1
+        reason: Initial plan
+        timestamp: "2025-07-16T00:00:00Z"
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 130
+        focus_area: user-facing documentation
+        verification:
+          - README.md exists at repo root
+          - All 11 sections are present with substantive content
+          - No TBD or TODO markers anywhere in the file
+          - All code blocks have correct language tags
+          - News sources table lists all 8 sources (6 RSS + 2 scraped: Anthropic, Mistral)
+        acceptance_criteria:
+          - A new user can follow README to set up and run the project from scratch
+            using only `gh auth login` and `uv sync` — no API key steps
+          - Prerequisites section mentions GitHub Copilot subscription and `gh auth login`
+          - No "Get a GitHub token / API key" section exists
+          - News sources table includes all 8 sources with Method column (6 RSS + 2 scraped)
+          - Troubleshooting covers Copilot auth, uv not found, git push fails,
+            scraping 0 articles, gpt-5-mini model unavailable
+          - Sample caveman summaries demonstrate the output style
+        task_type: documentation
+        audience: developers
+        coverage_matrix:
+          - Prerequisites and installation
+          - Manual run instructions with sample output
+          - Cron scheduler setup and verification
+          - Output format with sample markdown snippet
+          - All 8 news sources with fetch method (6 RSS + 2 scraped)
+          - Deduplication behaviour and reset procedure
+          - Log file location and tailing command
+          - Troubleshooting for 5 common failure scenarios
+
+planning_pass: 3
+planning_history:
+  - pass: 2
+    timestamp: "2025-07-16T12:00:00Z"
+    reason: |
+      Revision based on reviewer + critic audit. Applied 11 fixes spanning blocking
+      correctness issues, wave/dependency structural bugs, and cleanup items.
+    changes:
+      - "[BLOCKING] gpt-5-mini → gpt-4o-mini throughout (model name was wrong)"
+      - "[BLOCKING] Removed xAI from scrape_sources.py (HTTP 403, CDN/WAF blocking)"
+      - "[BLOCKING] Removed Meta AI from scrape_sources.py (pure JS SPA, zero content via httpx)"
+      - "[HIGH] T2 moved to wave 2 (was wave 1 but depended on T1 — wave/dep conflict)"
+      - "[HIGH] T7 moved to wave 5 with T6 added as dependency (was missing T6 dep)"
+      - "[MEDIUM] Filename format: %Y-%m-%d-%H:%M:%S → %Y-%m-%d-%H-%M-%S (colons cause macOS/git issues)"
+      - "[MEDIUM] setup_cron.sh: (crontab -l 2>/dev/null || true; ...) to handle fresh machine"
+      - "[MEDIUM] GITHUB_TOKEN removed from CRON_LINE (load_dotenv() handles it; inline exposes token)"
+      - "[LOW] logs/.gitkeep removed from T1 (inside gitignored dir, never tracked)"
+      - "[LOW] conflicts_with removed between T2 and T3 (different waves, no conflict)"
+      - "[LOW] time.sleep(0.5) between LLM calls + exponential backoff (5s/15s) on RateLimitError"
+      - "[LOW] Source count updated: 10 → 8 across objective, tldr, README, assumptions"
+      - "[LOW] T3 resilience note: per-source try/except must never crash on 4xx or empty content"
+      - "[LOW] T6→T7 contract added to contracts section"
+  - pass: 3
+    timestamp: "2025-07-17T00:00:00Z"
+    reason: |
+      SDK swap: replaced OpenAI Python SDK (GitHub Models / Azure endpoint) with the
+      official GitHub Copilot SDK (github-copilot-sdk PyPI package). No API key, no
+      .env file, no GITHUB_TOKEN — auth is handled by logged-in gh / Copilot CLI
+      credentials automatically.
+    changes:
+      - "[BREAKING] T4 llm.py rewritten: CopilotClient async pattern, model=gpt-5-mini, event-driven streaming (AssistantMessageData / SessionIdleData)"
+      - "[BREAKING] T5 fetch.py made fully async: async def main() / asyncio.run(main()); await llm.summarise(); no load_dotenv()"
+      - "[BREAKING] T1 pyproject.toml: removed openai>=1.30 and python-dotenv>=1.0; added github-copilot-sdk"
+      - "[BREAKING] T1 deliverables: removed .env.example (no API key needed)"
+      - "[HIGH] T6 setup_cron.sh simplified: removed GITHUB_TOKEN/.env read; cron line has no env var injection"
+      - "[HIGH] T7 README.md: removed API key / .env setup section; added gh auth login + Copilot subscription prereq"
+      - "[MEDIUM] pre_mortem: replaced GITHUB_TOKEN missing risk with Copilot not authenticated / no subscription risk"
+      - "[MEDIUM] contracts: T1→T4 updated to reflect github-copilot-sdk dep instead of openai+dotenv"
+      - "[MEDIUM] contracts: T4→T5 interface updated to async def summarise(text: str) -> str"
+      - "[LOW] implementation_specification: llm.py, fetch.py, setup_cron.sh component details updated"
+      - "[LOW] integration_points: removed GitHub Models API reference; added CopilotClient via gh auth"
+      - "[LOW] T6 context_files: removed .env.example reference"
+      - "[LOW] T7 context_files: removed .env.example reference"
+      - "[LOW] objective updated to reflect Copilot SDK (no API key required)"
