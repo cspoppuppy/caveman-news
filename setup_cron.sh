@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$REPO_DIR/logs"
-CRON_MARKER="caveman-news-local"
+CRON_MARKER="caveman-news"
 
 # Resolve absolute path to uv
 UV_PATH="$(which uv 2>/dev/null || echo "")"

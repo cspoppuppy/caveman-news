@@ -33,8 +33,8 @@ Caveman News Local is a daily AI news aggregator that runs entirely on your mach
 ## Setup
 
 ```bash
-git clone <this-repo> caveman-news-local
-cd caveman-news-local
+git clone <this-repo> caveman-news
+cd caveman-news
 uv sync                  # installs all deps including github-copilot-sdk
 bash setup_cron.sh       # installs the 9:30am cron job
 ```
@@ -70,7 +70,7 @@ Articles are grouped by source and written sequentially. Each article shows titl
 ## Project structure
 
 ```
-caveman-news-local/
+caveman-news/
 ├── fetch.py              ← Run this
 ├── rss_sources.py        ← 6 RSS feeds
 ├── scrape_sources.py     ← 2 scraped sites (Anthropic, Mistral)
@@ -91,7 +91,7 @@ bash setup_cron.sh
 crontab -l
 
 # Remove:
-crontab -l | grep -v "caveman-news-local" | crontab -
+crontab -l | grep -v "caveman-news" | crontab -
 
 # View logs:
 tail -f logs/cron.log
@@ -100,7 +100,7 @@ tail -f logs/cron.log
 `setup_cron.sh` resolves the absolute path to `uv` at install time and writes a cron line like:
 
 ```
-30 9 * * * cd "/path/to/caveman-news-local" && "/usr/local/bin/uv" run python fetch.py >> "/path/to/logs/cron.log" 2>&1
+30 9 * * * cd "/path/to/caveman-news" && "/usr/local/bin/uv" run python fetch.py >> "/path/to/logs/cron.log" 2>&1
 ```
 
 The `logs/` directory is created automatically by the script if it does not exist.

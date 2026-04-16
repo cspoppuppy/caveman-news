@@ -1,4 +1,4 @@
-baseURL = "https://cspoppuppy.github.io/caveman-news-local/"
+baseURL = "https://cspoppuppy.github.io/caveman-news/"
 languageCode = "en-gb"
 title = "🪨 Caveman News"
 disableHugoGeneratorInject = true

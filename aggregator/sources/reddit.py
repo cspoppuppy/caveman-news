@@ -16,7 +16,7 @@ SUBREDDITS: list[tuple[str, str]] = [
 
 _MAX_POSTS = 10
 _MAX_CHARS = 3000
-_HEADERS = {"User-Agent": "CavemanNewsBot/1.0 (github.com/cspoppuppy/caveman-news-local)"}
+_HEADERS = {"User-Agent": "CavemanNewsBot/1.0 (github.com/cspoppuppy/caveman-news)"}
 
 
 def fetch_reddit_articles(today: date | None = None) -> list[Article]:

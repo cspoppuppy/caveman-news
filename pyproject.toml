@@ -1,5 +1,5 @@
 [project]
-name = "caveman-news-local"
+name = "caveman-news"
 version = "0.1.0"
 description = "AI news aggregator with caveman-speak summaries"
 requires-python = ">=3.11"
