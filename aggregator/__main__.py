@@ -55,27 +55,37 @@ async def main() -> None:
             )
 
         now = datetime.now(timezone.utc)
-        content = (
+        out = cat_dir / f"{today.isoformat()}.md"
+        existing = out.exists()
+
+        frontmatter = (
             f'---\ntitle: "🪨 Caveman News — {today.strftime("%d %b %Y")}"\n'
             f'date: "{now.strftime("%Y-%m-%dT%H:%M:%SZ")}"\ndraft: false\n'
             f'tags: ["caveman", "digest", "{cat_slug}"]\ncategories: ["{category}"]\n---\n\n'
             f"*UGG BRING CAVE KNOWLEDGE. Sources: {', '.join(sorted(sources))}*\n\n"
         )
+
         count = 0
+        new_sections = ""
         for source, articles in sorted(sources.items()):
-            content += f"## {source}\n\n"
+            source_block = f"## {source}\n\n"
             for article in articles:
                 summary = await summarise(article.title, article.content)
                 if summary is None:
                     continue
-                content += f"### [{article.title}]({article.url})\n\n{summary}\n\n"
+                source_block += f"### [{article.title}]({article.url})\n\n{summary}\n\n"
                 newly_seen.add(article.url)
                 count += 1
+            if count:
+                new_sections += source_block
 
         if not count:
             continue
-        out = cat_dir / f"{today.isoformat()}.md"
-        out.write_text(content)
+        if existing:
+            with out.open("a") as f:
+                f.write(new_sections)
+        else:
+            out.write_text(frontmatter + new_sections)
         written.append(out)
         logger.info("Written %s (%d articles)", out.name, count)
 
