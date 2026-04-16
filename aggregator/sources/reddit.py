@@ -8,66 +8,46 @@ from .models import Article
 
 logger = logging.getLogger(__name__)
 
-# Each entry: (subreddit, category)
 SUBREDDITS: list[tuple[str, str]] = [
     ("artificial", "AI"),
     ("MachineLearning", "AI"),
     ("LocalLLaMA", "AI"),
 ]
 
-_MAX_POSTS_PER_SUB = 10
-_MAX_CONTENT_CHARS = 3000
+_MAX_POSTS = 10
+_MAX_CHARS = 3000
 _HEADERS = {"User-Agent": "CavemanNewsBot/1.0 (github.com/cspoppuppy/caveman-news-local)"}
 
 
 def fetch_reddit_articles(today: date | None = None) -> list[Article]:
-    """Fetch Reddit posts published today (UTC) from configured subreddits."""
-    if today is None:
-        today = date.today()
-
-    articles: list[Article] = []
-
-    for subreddit, category in SUBREDDITS:
-        url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=25"
+    today = today or date.today()
+    articles = []
+    for sub, category in SUBREDDITS:
         try:
-            resp = httpx.get(url, headers=_HEADERS, timeout=15, follow_redirects=True, verify=False)
+            resp = httpx.get(
+                f"https://www.reddit.com/r/{sub}/new.json?limit=25",
+                headers=_HEADERS, timeout=15, follow_redirects=True, verify=False,
+            )
             resp.raise_for_status()
-            data = resp.json()
         except Exception as exc:
-            logger.warning("Failed to fetch r/%s: %s", subreddit, exc)
+            logger.warning("r/%s failed: %s", sub, exc)
             continue
-
         count = 0
-        for post in data.get("data", {}).get("children", []):
-            if count >= _MAX_POSTS_PER_SUB:
+        for post in resp.json().get("data", {}).get("children", []):
+            if count >= _MAX_POSTS:
                 break
-
-            p = post.get("data", {})
-
-            created_utc = p.get("created_utc")
-            if created_utc is None:
+            p = post["data"]
+            ts = p.get("created_utc")
+            if not ts or datetime.fromtimestamp(ts, tz=timezone.utc).date() != today:
                 continue
-            pub_date = datetime.fromtimestamp(created_utc, tz=timezone.utc).date()
-            if pub_date != today:
+            title, perm = p.get("title", "").strip(), p.get("permalink", "")
+            if not title or not perm:
                 continue
-
-            title = p.get("title", "").strip()
-            permalink = p.get("permalink", "")
-            if not title or not permalink:
-                continue
-
-            content = (p.get("selftext") or "").strip()[:_MAX_CONTENT_CHARS]
-
             articles.append(Article(
-                title=title,
-                url=f"https://reddit.com{permalink}",
-                content=content,
-                source=f"r/{subreddit}",
-                category=category,
-                published_date=pub_date,
+                title=title, url=f"https://reddit.com{perm}",
+                content=(p.get("selftext") or "")[:_MAX_CHARS],
+                source=f"r/{sub}", category=category, published_date=today,
             ))
             count += 1
-
-        logger.info("r/%s: fetched %d articles for %s", subreddit, count, today)
-
+        logger.info("r/%s: %d articles", sub, count)
     return articles

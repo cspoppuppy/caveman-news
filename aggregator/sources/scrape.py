@@ -10,97 +10,75 @@ logger = logging.getLogger(__name__)
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; CavemanNewsBot/1.0)"}
 _MAX_ARTICLES = 5
-_MAX_CONTENT_CHARS = 3000
+_MAX_CHARS = 3000
+
+SCRAPED_SOURCES = [
+    ("Anthropic", "https://www.anthropic.com", "https://www.anthropic.com/news", "/news/"),
+    ("Mistral",   "https://mistral.ai",         "https://mistral.ai/news/",       "/news/"),
+]
 
 
-def _extract_article_text(html: str) -> str:
+def _text(tag) -> str:
+    return tag.get_text(" ", strip=True) if tag else ""
+
+
+def _article_text(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
-    for candidate in ("article", "main"):
-        tag = soup.find(candidate)
-        if tag:
-            return tag.get_text(" ", strip=True)[:_MAX_CONTENT_CHARS]
+    for sel in ("article", "main"):
+        if tag := soup.find(sel):
+            return _text(tag)[:_MAX_CHARS]
     for div in soup.find_all("div", class_=True):
-        classes = " ".join(div.get("class", []))
-        if "content" in classes.lower():
-            text = div.get_text(" ", strip=True)
-            if len(text) > 200:
-                return text[:_MAX_CONTENT_CHARS]
+        if "content" in " ".join(div.get("class", [])).lower():
+            if len(t := _text(div)) > 200:
+                return t[:_MAX_CHARS]
     return ""
 
 
-def _scrape_links(soup, path_prefix: str) -> list[tuple[str, str]]:
-    """Extract (href, title) pairs whose href starts with path_prefix."""
-    seen: set[str] = set()
-    links: list[tuple[str, str]] = []
-
-    for a_tag in soup.find_all("a", href=True):
-        href: str = a_tag["href"]
-        if not href.startswith(path_prefix):
-            continue
-        if href.rstrip("/") == path_prefix.rstrip("/"):
-            continue
-        if href in seen:
+def _scrape_links(soup, prefix: str) -> list[tuple[str, str]]:
+    seen, links = set(), []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if not href.startswith(prefix) or href.rstrip("/") == prefix.rstrip("/") or href in seen:
             continue
         seen.add(href)
-
-        title = a_tag.get_text(" ", strip=True)
-        if not title:
-            for tag in ("h2", "h3", "h1"):
-                heading = a_tag.find(tag) or (a_tag.parent and a_tag.parent.find(tag))
-                if heading:
-                    title = heading.get_text(" ", strip=True)
-                    break
-
+        title = _text(a) or next(
+            (_text(h) for scope in (a, a.parent) if scope
+             for tag in ("h2", "h3", "h1") if (h := scope.find(tag))), ""
+        )
         if title:
             links.append((href, title))
-
         if len(links) >= _MAX_ARTICLES:
             break
-
     return links
 
 
-def _fetch_source(base_url: str, index_url: str, path_prefix: str, source_name: str) -> list[Article]:
-    articles: list[Article] = []
-
+def _fetch_source(name: str, base: str, index_url: str, prefix: str) -> list[Article]:
     try:
         resp = httpx.get(index_url, timeout=15, follow_redirects=True, headers=_HEADERS, verify=False)
-        if resp.status_code != 200:
-            logger.warning("%s news returned HTTP %d", source_name, resp.status_code)
-            return []
+        resp.raise_for_status()
     except Exception as exc:
-        logger.warning("Failed to fetch %s news index: %s", source_name, exc)
+        logger.warning("%s index failed: %s", name, exc)
         return []
-
-    soup = BeautifulSoup(resp.text, "lxml")
-    for href, title in _scrape_links(soup, path_prefix):
-        article_url = f"{base_url}{href}"
+    articles = []
+    for href, title in _scrape_links(BeautifulSoup(resp.text, "lxml"), prefix):
         content = ""
         try:
-            art_resp = httpx.get(article_url, timeout=10, follow_redirects=True, headers=_HEADERS, verify=False)
-            if art_resp.status_code == 200:
-                content = _extract_article_text(art_resp.text)
+            r = httpx.get(f"{base}{href}", timeout=10, follow_redirects=True, headers=_HEADERS, verify=False)
+            if r.status_code == 200:
+                content = _article_text(r.text)
         except Exception as exc:
-            logger.warning("Failed to fetch %s article %s: %s", source_name, article_url, exc)
-
-        articles.append(Article(title=title, url=article_url, content=content, source=source_name, category="AI"))
-
+            logger.warning("%s article failed %s: %s", name, href, exc)
+        articles.append(Article(title=title, url=f"{base}{href}", content=content, source=name, category="AI"))
     return articles
 
 
 def fetch_scraped_articles() -> list[Article]:
-    """Scrape Anthropic and Mistral. Each source is independently guarded — never crashes."""
-    articles: list[Article] = []
-
-    for name, base, index, prefix in [
-        ("Anthropic", "https://www.anthropic.com", "https://www.anthropic.com/news", "/news/"),
-        ("Mistral", "https://mistral.ai", "https://mistral.ai/news/", "/news/"),
-    ]:
+    articles = []
+    for name, base, index_url, prefix in SCRAPED_SOURCES:
         try:
-            fetched = _fetch_source(base, index, prefix, name)
+            fetched = _fetch_source(name, base, index_url, prefix)
             articles.extend(fetched)
-            logger.info("%s: fetched %d articles", name, len(fetched))
+            logger.info("%s: %d articles", name, len(fetched))
         except Exception as exc:
-            logger.warning("%s scraper failed unexpectedly: %s", name, exc)
-
+            logger.warning("%s failed: %s", name, exc)
     return articles
