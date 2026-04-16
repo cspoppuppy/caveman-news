@@ -21,10 +21,10 @@ export PATH="/usr/bin:/usr/local/bin:$PATH"
 cd "$REPO_DIR"
 "$UV_PATH" run python -m aggregator
 
-# Push any new content files written by the aggregator
-if ! git diff --quiet HEAD -- site/content .seen_urls.json 2>/dev/null; then
+# Push any new content files written by the aggregator (tracked or untracked)
+if [[ -n "$(git status --porcelain site/content 2>/dev/null)" ]]; then
     TODAY=$(date -u +%Y-%m-%d)
-    git add site/content .seen_urls.json
+    git add site/content
     git commit -m "🪨 caveman news ${TODAY}"
     git push
 else
