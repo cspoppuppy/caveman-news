@@ -4,7 +4,7 @@ import logging
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from aggregator.llm import summarise
+from aggregator.llm import review, summarise
 from aggregator.sources import fetch_reddit_articles, fetch_rss_articles, fetch_scraped_articles
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -54,6 +54,10 @@ async def main() -> None:
     logger.info("%d new articles", len(new_articles))
     if not new_articles:
         return
+
+    approved_urls = await review(new_articles)
+    new_articles = [a for a in new_articles if a.url in approved_urls]
+    logger.info("%d articles after review", len(new_articles))
 
     by_category: dict[str, dict[str, list]] = {}
     for a in new_articles:
