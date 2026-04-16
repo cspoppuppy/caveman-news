@@ -7,3 +7,5 @@ logs/
 *.egg-info/
 dist/
 .DS_Store
+public/
+resources/

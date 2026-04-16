@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).parent
 SEEN_URLS_FILE = REPO_ROOT / ".seen_urls.json"
-NEWS_DIR = REPO_ROOT / "news"
+CONTENT_DIR = REPO_ROOT / "content"
 
 
 def load_seen_urls() -> set[str]:
@@ -34,13 +34,14 @@ def save_seen_urls(seen: set[str]) -> None:
     SEEN_URLS_FILE.write_text(json.dumps(sorted(seen), indent=2))
 
 
-def git_commit_and_push(filepath: Path) -> None:
+def git_commit_and_push(filepaths: list[Path]) -> None:
     try:
-        subprocess.run(["git", "add", str(filepath)], cwd=REPO_ROOT, check=True, capture_output=True)
-        commit_msg = f"🪨 caveman news {filepath.stem}"
+        for fp in filepaths:
+            subprocess.run(["git", "add", str(fp)], cwd=REPO_ROOT, check=True, capture_output=True)
+        commit_msg = f"🪨 caveman news {filepaths[0].stem}"
         subprocess.run(["git", "commit", "-m", commit_msg], cwd=REPO_ROOT, check=True, capture_output=True)
         subprocess.run(["git", "push"], cwd=REPO_ROOT, check=True, capture_output=True)
-        logger.info("Git: committed and pushed %s", filepath.name)
+        logger.info("Git: committed and pushed %d file(s)", len(filepaths))
     except subprocess.CalledProcessError as e:
         logger.warning("Git operation failed: %s\n%s", e, e.stderr.decode() if e.stderr else "")
 
@@ -73,34 +74,50 @@ async def main() -> None:
         logger.info("No new articles. Nothing to write.")
         return
 
-    # 3. Group by category → source (nested dict for structured markdown)
+    # 3. Group by category → source
     by_category: dict[str, dict[str, list]] = {}
     for article in new_articles:
-        cat = article.category
-        src = article.source
-        by_category.setdefault(cat, {}).setdefault(src, []).append(article)
+        by_category.setdefault(article.category, {}).setdefault(article.source, []).append(article)
 
-    # 4. Build markdown
-    total = sum(len(arts) for sources in by_category.values() for arts in sources.values())
-    now = datetime.now()
-    filename = now.strftime("%Y-%m-%d-%H-%M-%S") + ".md"
-    output_path = NEWS_DIR / filename
-
-    lines = [
-        f"# 🪨 Caveman News — {today.isoformat()}",
-        "",
-        f"> UGG BRING NEWS TODAY. READ OR NO READ. UGG NOT CARE.",
-        "",
-    ]
-
-    newly_seen: set[str] = set()
-    total_summarised = 0
+    # 4. Build Hugo content files — one per category
+    all_newly_seen: set[str] = set()
+    written_files: list[Path] = []
 
     for category, sources in sorted(by_category.items()):
-        lines.append(f"## {category}")
-        lines.append("")
+        cat_slug = category.lower().replace(" ", "-")
+        cat_dir = CONTENT_DIR / cat_slug
+        cat_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure category _index.md exists
+        index_file = cat_dir / "_index.md"
+        if not index_file.exists():
+            index_file.write_text(
+                f'---\ntitle: "{category}"\ndescription: "Daily {category} news, caveman-style."\n---\n',
+                encoding="utf-8",
+            )
+
+        output_path = cat_dir / f"{today.isoformat()}.md"
+        sources_used = sorted(sources.keys())
+        now = datetime.utcnow()
+
+        lines = [
+            "---",
+            f'title: "🪨 Caveman News — {today.strftime("%d %b %Y")}"',
+            f'date: "{now.strftime("%Y-%m-%dT%H:%M:%SZ")}"',
+            "draft: false",
+            f'tags: ["caveman", "digest", "{cat_slug}"]',
+            f'categories: ["{category}"]',
+            "---",
+            "",
+            f"*UGG BRING CAVE KNOWLEDGE. Sources: {', '.join(sources_used)}*",
+            "",
+        ]
+
+        newly_seen_cat: set[str] = set()
+        total_summarised = 0
+
         for source, articles in sorted(sources.items()):
-            lines.append(f"### {source}")
+            lines.append(f"## {source}")
             lines.append("")
             for article in articles:
                 logger.info("Summarising: [%s / %s] %s", category, source, article.title[:55])
@@ -108,25 +125,30 @@ async def main() -> None:
                 if summary is None:
                     logger.info("Skipping (no summary): %s", article.title[:60])
                     continue
-                lines.append(f"#### {article.title}")
-                lines.append(f"🔗 {article.url}")
+                lines.append(f"### [{article.title}]({article.url})")
                 lines.append("")
                 lines.append(summary)
                 lines.append("")
-                newly_seen.add(article.url)
+                newly_seen_cat.add(article.url)
                 total_summarised += 1
 
-    # 5. Write file
-    NEWS_DIR.mkdir(exist_ok=True)
-    output_path.write_text("\n".join(lines), encoding="utf-8")
-    logger.info("Written: %s (%d articles)", output_path.name, total_summarised)
+        if total_summarised == 0:
+            logger.info("No summaries for category %s. Skipping.", category)
+            continue
 
-    # 6. Update seen URLs (only after successful write)
-    seen_urls.update(newly_seen)
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("Written: %s (%d articles)", output_path, total_summarised)
+        all_newly_seen.update(newly_seen_cat)
+        written_files.append(output_path)
+
+    # 5. Save seen URLs + git push
+    if not written_files:
+        logger.info("Nothing written. UGG BORED.")
+        return
+
+    seen_urls.update(all_newly_seen)
     save_seen_urls(seen_urls)
-
-    # 7. Git commit + push
-    git_commit_and_push(output_path)
+    git_commit_and_push(written_files)
 
     logger.info("=== Caveman News done. UGG PLEASED. ===")
 

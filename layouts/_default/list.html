@@ -1,0 +1,43 @@
+{{ define "title" }}{{ if .IsHome }}🪨 Caveman News{{ else }}{{ .Title }} | 🪨 Caveman News{{ end }}{{ end }}
+
+{{ define "main" }}
+{{ if .IsHome }}
+  <h1>🪨 Caveman News</h1>
+  <p class="intro">AI news. Every day. Caveman style. UGG KNOW THINGS.</p>
+
+  <div class="hub">
+    {{ range .Site.Sections }}
+    <div class="hub-section">
+      <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2>
+      <p class="desc">{{ .Description }}</p>
+      <ul>
+        {{ range first 5 .Pages }}
+        <li>
+          <a href="{{ .RelPermalink }}">{{ .Date.Format "02 Jan 2006" }}</a>
+          <span class="post-date">{{ .Date.Format "Mon" }}</span>
+        </li>
+        {{ else }}
+        <li style="color:#9a8060;font-size:0.85rem;">No digests yet. UGG SLEEPING.</li>
+        {{ end }}
+      </ul>
+      <a class="view-all" href="{{ .RelPermalink }}">View all →</a>
+    </div>
+    {{ end }}
+  </div>
+
+{{ else }}
+  <p class="back-link"><a class="home-back-link" href="#">← 🪨 Caveman News</a></p>
+  <h1>{{ .Title }}</h1>
+  <p class="intro">{{ .Description }}</p>
+  <hr>
+  <div class="section-list">
+    {{ range .Pages }}
+    <article>
+      <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a> <span class="post-date">{{ .Date.Format "02 Jan 2006" }}</span></h2>
+    </article>
+    {{ else }}
+    <p style="color:#9a8060;">No digests yet. UGG COME BACK TOMORROW.</p>
+    {{ end }}
+  </div>
+{{ end }}
+{{ end }}
