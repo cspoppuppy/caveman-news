@@ -1,4 +1,4 @@
-"""Reddit source — fetches today's new posts from AI subreddits via public JSON API."""
+"""Reddit source — fetches posts since last run from AI subreddits via public JSON API."""
 import logging
 from datetime import date, datetime, timezone
 
@@ -19,8 +19,10 @@ _MAX_CHARS = 3000
 _HEADERS = {"User-Agent": "CavemanNewsBot/1.0 (github.com/cspoppuppy/caveman-news)"}
 
 
-def fetch_reddit_articles(today: date | None = None) -> list[Article]:
-    today = today or date.today()
+def fetch_reddit_articles(since: datetime | None = None) -> list[Article]:
+    if since is None:
+        since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    since_ts = since.timestamp()
     articles = []
     for sub, category in SUBREDDITS:
         try:
@@ -38,15 +40,16 @@ def fetch_reddit_articles(today: date | None = None) -> list[Article]:
                 break
             p = post["data"]
             ts = p.get("created_utc")
-            if not ts or datetime.fromtimestamp(ts, tz=timezone.utc).date() != today:
+            if not ts or ts < since_ts:
                 continue
             title, perm = p.get("title", "").strip(), p.get("permalink", "")
             if not title or not perm:
                 continue
+            pub_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
             articles.append(Article(
                 title=title, url=f"https://reddit.com{perm}",
                 content=(p.get("selftext") or "")[:_MAX_CHARS],
-                source=f"r/{sub}", category=category, published_date=today,
+                source=f"r/{sub}", category=category, published_date=pub_date,
             ))
             count += 1
         logger.info("r/%s: %d articles", sub, count)

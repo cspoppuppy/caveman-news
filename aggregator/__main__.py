@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).parent.parent
 SEEN_FILE = REPO_ROOT / ".seen_urls.json"
+LAST_RUN_FILE = REPO_ROOT / ".last_run"
 CONTENT_DIR = REPO_ROOT / "site" / "content"
 
 
@@ -26,9 +27,27 @@ def save_seen(seen: set[str]) -> None:
     SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2))
 
 
+def load_last_run() -> datetime:
+    """Return last run time (UTC). Defaults to start of today if never run."""
+    try:
+        if LAST_RUN_FILE.exists():
+            return datetime.fromisoformat(LAST_RUN_FILE.read_text().strip())
+    except Exception:
+        pass
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def save_last_run(dt: datetime) -> None:
+    LAST_RUN_FILE.write_text(dt.isoformat())
+
+
 async def main() -> None:
+    since = load_last_run()
+    now = datetime.now(timezone.utc)
     today = date.today()
-    all_articles = fetch_rss_articles(today) + fetch_scraped_articles() + fetch_reddit_articles(today)
+    logger.info("Scanning articles since %s", since.isoformat())
+
+    all_articles = fetch_rss_articles(since) + fetch_scraped_articles() + fetch_reddit_articles(since)
 
     seen = load_seen()
     new_articles = [a for a in all_articles if a.url and a.url not in seen]
@@ -92,6 +111,7 @@ async def main() -> None:
     if written:
         seen.update(newly_seen)
         save_seen(seen)
+        save_last_run(now)
         logger.info("Done. %d file(s) written.", len(written))
 
 

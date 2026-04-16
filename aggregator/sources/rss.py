@@ -1,6 +1,6 @@
 import re
 import logging
-from datetime import date
+from datetime import datetime, timezone
 
 import feedparser
 
@@ -25,8 +25,9 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
 
-def fetch_rss_articles(today: date | None = None) -> list[Article]:
-    today = today or date.today()
+def fetch_rss_articles(since: datetime | None = None) -> list[Article]:
+    if since is None:
+        since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     articles = []
     for source, url, category in RSS_FEEDS:
         try:
@@ -39,11 +40,13 @@ def fetch_rss_articles(today: date | None = None) -> list[Article]:
             if not title or not link:
                 continue
             pub = entry.get("published_parsed")
-            if pub and date(*pub[:3]) != today:
-                continue
+            if pub:
+                pub_dt = datetime(*pub[:6], tzinfo=timezone.utc)
+                if pub_dt < since:
+                    continue
             content = _strip_html(entry.get("summary", "") or entry.get("description", ""))[:_MAX_CHARS]
             articles.append(Article(
                 title=title, url=link, content=content, source=source, category=category,
-                published_date=date(*pub[:3]) if pub else None,
+                published_date=pub_dt.date() if pub else None,
             ))
     return articles
