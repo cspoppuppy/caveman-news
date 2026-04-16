@@ -1,4 +1,4 @@
 ---
 title: "AI"
-description: "Daily AI news, caveman-style. UGG KNOW THINGS."
+description: "AI news. Daily. Read or not. Me not care."
 ---
