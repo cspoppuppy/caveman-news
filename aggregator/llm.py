@@ -43,9 +43,9 @@ async def _llm_call(prompt: str, timeout: float = 30) -> str | None:
                 on_permission_request=PermissionHandler.approve_all, model="gpt-5-mini"
             ) as session:
                 def on_event(event):
-                    if event.type == SessionEventType.ASSISTANT_MESSAGE and event.data.content:
+                    if event.type == SessionEventType.ASSISTANT_MESSAGE and event.data and event.data.content:
                         parts.append(event.data.content)
-                    elif event.type == SessionEventType.SESSION_IDLE:
+                    elif event.type == SessionEventType.ASSISTANT_TURN_END:
                         done.set()
                 session.on(on_event)
                 await session.send(prompt)
