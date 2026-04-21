@@ -30,8 +30,8 @@ class TestArticleDataclass:
 # ---------------------------------------------------------------------------
 
 class TestRSSFeeds:
-    def test_has_six_feeds(self):
-        assert len(RSS_FEEDS) == 6
+    def test_has_seven_feeds(self):
+        assert len(RSS_FEEDS) == 7
 
     def test_all_feeds_are_3_tuples_of_strings(self):
         for item in RSS_FEEDS:

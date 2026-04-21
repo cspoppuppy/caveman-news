@@ -15,6 +15,7 @@ RSS_FEEDS: list[tuple[str, str, str]] = [
     ("HuggingFace", "https://huggingface.co/blog/feed.xml", "AI"),
     ("The Verge AI", "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml", "AI"),
     ("VentureBeat AI", "https://venturebeat.com/category/ai/feed/", "AI"),
+    ("The Register AI", "https://www.theregister.com/science/ai/headlines.atom", "AI"),
 ]
 
 _MAX_ENTRIES = 10
@@ -47,6 +48,6 @@ def fetch_rss_articles(since: datetime | None = None) -> list[Article]:
             content = _strip_html(entry.get("summary", "") or entry.get("description", ""))[:_MAX_CHARS]
             articles.append(Article(
                 title=title, url=link, content=content, source=source, category=category,
-                published_date=pub_dt.date() if pub else None,
+                published_at=pub_dt if pub else None,
             ))
     return articles

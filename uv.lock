@@ -38,7 +38,7 @@ wheels = [
 ]
 
 [[package]]
-name = "caveman-news-local"
+name = "caveman-news"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

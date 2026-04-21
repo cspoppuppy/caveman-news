@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import datetime
 
 
 @dataclass
@@ -9,4 +9,4 @@ class Article:
     content: str
     source: str
     category: str = "AI"
-    published_date: date | None = field(default=None, compare=False)
+    published_at: datetime | None = field(default=None, compare=False)
