@@ -33,23 +33,22 @@ Articles:
 {articles}"""
 
 
-async def _llm_call(prompt: str, timeout: float = 30) -> str | None:
-    """Single LLM round-trip. Returns text or None on failure."""
+async def _llm_call(client: CopilotClient, prompt: str, timeout: float = 30) -> str | None:
+    """Single LLM round-trip using a shared client. Returns text or None on failure."""
     parts: list[str] = []
     done = asyncio.Event()
     try:
-        async with CopilotClient() as client:
-            async with await client.create_session(
-                on_permission_request=PermissionHandler.approve_all, model="gpt-5-mini"
-            ) as session:
-                def on_event(event):
-                    if event.type == SessionEventType.ASSISTANT_MESSAGE and event.data and event.data.content:
-                        parts.append(event.data.content)
-                    elif event.type == SessionEventType.ASSISTANT_TURN_END:
-                        done.set()
-                session.on(on_event)
-                await session.send(prompt)
-                await asyncio.wait_for(done.wait(), timeout=timeout)
+        async with await client.create_session(
+            on_permission_request=PermissionHandler.approve_all, model="gpt-5-mini"
+        ) as session:
+            def on_event(event):
+                if event.type == SessionEventType.ASSISTANT_MESSAGE and event.data and event.data.content:
+                    parts.append(event.data.content)
+                elif event.type == SessionEventType.ASSISTANT_TURN_END:
+                    done.set()
+            session.on(on_event)
+            await session.send(prompt)
+            await asyncio.wait_for(done.wait(), timeout=timeout)
         return "".join(parts).strip() or None
     except asyncio.TimeoutError:
         logger.warning("LLM timeout")
@@ -58,12 +57,12 @@ async def _llm_call(prompt: str, timeout: float = 30) -> str | None:
     return None
 
 
-async def review(articles: "list[Article]") -> set[str]:
+async def review(client: CopilotClient, articles: "list[Article]") -> set[str]:
     """Return URLs of articles that pass review (not duplicate, not old news)."""
     if not articles:
         return set()
     numbered = "\n".join(f"{i}: {a.title}" for i, a in enumerate(articles))
-    raw = await _llm_call(_REVIEW_PROMPT.format(articles=numbered), timeout=60)
+    raw = await _llm_call(client, _REVIEW_PROMPT.format(articles=numbered), timeout=60)
     if not raw:
         logger.warning("Review LLM failed — keeping all %d articles", len(articles))
         return {a.url for a in articles}
@@ -81,8 +80,8 @@ async def review(articles: "list[Article]") -> set[str]:
         return {a.url for a in articles}
 
 
-async def summarise(title: str, content: str) -> str | None:
-    result = await _llm_call(_SUMMARISE_PROMPT.format(title=title, content=content[:2000]))
+async def summarise(client: CopilotClient, title: str, content: str) -> str | None:
+    result = await _llm_call(client, _SUMMARISE_PROMPT.format(title=title, content=content[:2000]))
     if result is None:
         logger.warning("LLM timeout: %s", title)
     return result
