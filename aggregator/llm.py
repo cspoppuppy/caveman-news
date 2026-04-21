@@ -81,7 +81,7 @@ async def review(client: CopilotClient, articles: "list[Article]") -> set[str]:
 
 
 async def summarise(client: CopilotClient, title: str, content: str) -> str | None:
-    result = await _llm_call(client, _SUMMARISE_PROMPT.format(title=title, content=content[:2000]))
+    result = await _llm_call(client, _SUMMARISE_PROMPT.format(title=title, content=content[:2000]), timeout=60)
     if result is None:
         logger.warning("LLM timeout: %s", title)
     return result
