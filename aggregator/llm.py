@@ -1,10 +1,7 @@
-import asyncio
-import json
 import logging
 from typing import TYPE_CHECKING
 
 from copilot import CopilotClient
-from copilot.generated.session_events import SessionEventType
 from copilot.session import PermissionHandler
 
 if TYPE_CHECKING:
@@ -35,22 +32,15 @@ Articles:
 
 async def _llm_call(client: CopilotClient, prompt: str, timeout: float = 30) -> str | None:
     """Single LLM round-trip using a shared client. Returns text or None on failure."""
-    parts: list[str] = []
-    done = asyncio.Event()
     try:
         async with await client.create_session(
             on_permission_request=PermissionHandler.approve_all, model="gpt-5-mini"
         ) as session:
-            def on_event(event):
-                if event.type == SessionEventType.ASSISTANT_MESSAGE and event.data and event.data.content:
-                    parts.append(event.data.content)
-                elif event.type == SessionEventType.ASSISTANT_TURN_END:
-                    done.set()
-            session.on(on_event)
-            await session.send(prompt)
-            await asyncio.wait_for(done.wait(), timeout=timeout)
-        return "".join(parts).strip() or None
-    except asyncio.TimeoutError:
+            event = await session.send_and_wait(prompt, timeout=timeout)
+            if event and event.data and event.data.content:
+                return event.data.content.strip() or None
+            return None
+    except TimeoutError:
         logger.warning("LLM timeout")
     except Exception as e:
         logger.warning("LLM error: %s", e)
@@ -81,7 +71,7 @@ async def review(client: CopilotClient, articles: "list[Article]") -> set[str]:
 
 
 async def summarise(client: CopilotClient, title: str, content: str) -> str | None:
-    result = await _llm_call(client, _SUMMARISE_PROMPT.format(title=title, content=content[:2000]), timeout=60)
+    result = await _llm_call(client, _SUMMARISE_PROMPT.format(title=title, content=content[:2000]))
     if result is None:
         logger.warning("LLM timeout: %s", title)
     return result
