@@ -1,10 +1,12 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from copilot import CopilotClient
+from copilot.client import SubprocessConfig
 
 from aggregator.llm import review, summarise
 from aggregator.sources import fetch_reddit_articles, fetch_rss_articles, fetch_scraped_articles, fetch_github_trending
@@ -57,7 +59,7 @@ async def main() -> None:
     if not new_articles:
         return
 
-    async with CopilotClient() as client:
+    async with CopilotClient(SubprocessConfig(github_token=os.environ.get("GITHUB_TOKEN") or None)) as client:
         approved_urls = await review(client, new_articles)
         new_articles = [a for a in new_articles if a.url in approved_urls]
         logger.info("%d articles after review", len(new_articles))
