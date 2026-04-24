@@ -18,15 +18,6 @@ fi
 # Ensure git can find ssh on macOS
 export PATH="/usr/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
-# Export GitHub token for Copilot SDK (required in cron — no interactive auth)
-if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-    GH_BIN="$(command -v gh 2>/dev/null || echo "")"
-    if [[ -n "$GH_BIN" ]]; then
-        GITHUB_TOKEN="$("$GH_BIN" auth token 2>/dev/null || true)"
-        [[ -n "$GITHUB_TOKEN" ]] && export GITHUB_TOKEN
-    fi
-fi
-
 cd "$REPO_DIR"
 "$UV_PATH" run python -m aggregator
 
