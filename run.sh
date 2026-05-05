@@ -18,8 +18,8 @@ fi
 # Ensure git can find ssh on macOS
 export PATH="/usr/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
-# Unset PAT so Copilot SDK uses the keyring OAuth token (PATs are rejected by Copilot API)
-unset GITHUB_TOKEN
+# # Unset PAT so Copilot SDK uses the keyring OAuth token (PATs are rejected by Copilot API)
+# unset GITHUB_TOKEN
 
 cd "$REPO_DIR"
 "$UV_PATH" run python -m aggregator
